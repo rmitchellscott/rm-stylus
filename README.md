@@ -1,3 +1,5 @@
+[![rm1](https://img.shields.io/badge/rM1-supported-green)](https://remarkable.com/store/remarkable)
+[![rm2](https://img.shields.io/badge/rM2-supported-green)](https://remarkable.com/store/remarkable-2)
 # rm-stylus
 
 An [xovi](https://github.com/asivery/xovi) extension that converts stylus button presses to keyboard shortcuts for reMarkable tablets.
