@@ -4,10 +4,10 @@
 
 An [xovi](https://github.com/asivery/xovi) extension that converts stylus button presses to keyboard shortcuts for reMarkable tablets.
 
-- BTN_STYLUS (side button) → Ctrl+U (undo)
-- BTN_TOOL_RUBBER (eraser end) → Ctrl+T (toggle eraser)
-- 2 button clicks → Ctrl+Z
-- 3 button clicks → Ctrl+Y
+- BTN_STYLUS (side button) → Ctrl+U
+- BTN_TOOL_RUBBER (eraser end) → Ctrl+T
+- 2 button clicks → Ctrl+Z (undo)
+- 3 button clicks → Ctrl+Y (redo)
 
 Works with [shortcutsToChooseEraser.qmd](https://github.com/ingatellent/xovi-qmd-extensions/tree/main?tab=readme-ov-file#shortcutstochooseeraseqmd) for eraser switching.
 
