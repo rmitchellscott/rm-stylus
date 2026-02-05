@@ -4,14 +4,13 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <cerrno>
+#include <dlfcn.h>
 #include <linux/input.h>
 
 #include <QObject>
 #include <QSocketNotifier>
-#include <QThread>
-#include <QTimer>
-#include <QElapsedTimer>
-#include <qpa/qwindowsysteminterface.h>
+#include <QCoreApplication>
+#include <QtQml>
 
 extern "C" {
 #include "xovi.h"
@@ -23,6 +22,7 @@ extern "C" {
 
 #define INPUT_DEVICES "/proc/bus/input/devices"
 #define WACOM_NAME "Wacom I2C Digitizer"
+#define ELAN_NAME "Elan marker input"
 
 static void debug_log(const char* format, ...) {
     va_list args;
@@ -42,12 +42,13 @@ static char* findPenDevice() {
 
     static char device_path[64];
     char line[256];
-    bool found_wacom = false;
+    bool found_pen = false;
 
     while (fgets(line, sizeof(line), f)) {
         if (strncmp(line, "N: Name=\"", 9) == 0) {
-            found_wacom = (strstr(line, WACOM_NAME) != nullptr);
-        } else if (found_wacom && strncmp(line, "H: Handlers=", 12) == 0) {
+            found_pen = (strstr(line, WACOM_NAME) != nullptr ||
+                         strstr(line, ELAN_NAME) != nullptr);
+        } else if (found_pen && strncmp(line, "H: Handlers=", 12) == 0) {
             char *event = strstr(line, "event");
             if (event) {
                 int event_num;
@@ -61,18 +62,15 @@ static char* findPenDevice() {
     }
 
     fclose(f);
-    debug_log("Could not find %s device\n", WACOM_NAME);
+    debug_log("Could not find pen device\n");
     return nullptr;
 }
 
 class StylusHandler : public QObject {
     Q_OBJECT
 public:
-    static constexpr int PRESS_TIMEOUT_MS = 200;
-
     StylusHandler(const QString &device, QObject *parent = nullptr)
-        : QObject(parent), m_fd(-1), m_notifier(nullptr), m_device(device),
-          m_clickCount(0), m_primed(false) {
+        : QObject(parent), m_fd(-1), m_notifier(nullptr), m_rubberActive(false) {
 
         m_fd = open(device.toLocal8Bit().constData(), O_RDONLY | O_NONBLOCK);
         if (m_fd < 0) {
@@ -81,13 +79,9 @@ public:
         }
         debug_log("Opened pen device: %s\n", qPrintable(device));
 
-        m_clickTimer = new QTimer(this);
-        m_clickTimer->setSingleShot(true);
-        m_clickTimer->setInterval(PRESS_TIMEOUT_MS);
-        connect(m_clickTimer, &QTimer::timeout, this, &StylusHandler::onClickTimeout);
-
         m_notifier = new QSocketNotifier(m_fd, QSocketNotifier::Read, this);
         connect(m_notifier, &QSocketNotifier::activated, this, &StylusHandler::readData);
+
         debug_log("Handler ready\n");
     }
 
@@ -96,96 +90,139 @@ public:
             close(m_fd);
     }
 
+signals:
+    void buttonPressed();
+    void buttonReleased();
+    void button2Pressed();
+    void button2Released();
+    void rubberActivated();
+    void rubberDeactivated();
+
 private slots:
     void readData() {
         struct input_event ev;
         while (read(m_fd, &ev, sizeof(ev)) == sizeof(ev)) {
-            if (ev.type == EV_KEY) {
-                if (ev.code == BTN_STYLUS) {
-                    handleStylusButton(ev.value);
-                } else if (ev.code == BTN_TOOL_RUBBER) {
-                    QEvent::Type qEvent = ev.value != 0 ? QEvent::KeyPress : QEvent::KeyRelease;
-                    debug_log("BTN_TOOL_RUBBER %s -> Ctrl+T\n", ev.value ? "press" : "release");
-                    QWindowSystemInterface::handleKeyEvent(nullptr, qEvent, Qt::Key_T, Qt::ControlModifier);
+            if (ev.type != EV_KEY)
+                continue;
+            if (ev.code == BTN_STYLUS) {
+                if (ev.value) {
+                    debug_log("BTN_STYLUS press\n");
+                    emit buttonPressed();
+                } else {
+                    debug_log("BTN_STYLUS release\n");
+                    emit buttonReleased();
+                }
+            } else if (ev.code == BTN_STYLUS2) {
+                if (ev.value) {
+                    debug_log("BTN_STYLUS2 press\n");
+                    emit button2Pressed();
+                } else {
+                    debug_log("BTN_STYLUS2 release\n");
+                    emit button2Released();
+                }
+            } else if (ev.code == BTN_TOOL_RUBBER) {
+                bool active = (ev.value != 0);
+                if (active != m_rubberActive) {
+                    m_rubberActive = active;
+                    if (active) {
+                        debug_log("BTN_TOOL_RUBBER activated\n");
+                        emit rubberActivated();
+                    } else {
+                        debug_log("BTN_TOOL_RUBBER deactivated\n");
+                        emit rubberDeactivated();
+                    }
                 }
             }
         }
     }
 
-    void onClickTimeout() {
-        if (m_clickCount == 2) {
-            debug_log("Double-click -> Ctrl+Z (undo)\n");
-            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyPress, Qt::Key_Z, Qt::ControlModifier);
-            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyRelease, Qt::Key_Z, Qt::ControlModifier);
-        } else if (m_clickCount >= 3) {
-            debug_log("Triple-click -> Ctrl+Y (redo)\n");
-            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyPress, Qt::Key_Y, Qt::ControlModifier);
-            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyRelease, Qt::Key_Y, Qt::ControlModifier);
-        }
-        m_clickCount = 0;
-        m_primed = false;
-    }
-
 private:
-    void handleStylusButton(int value) {
-        if (value != 0) {
-            debug_log("BTN_STYLUS press -> Ctrl+U\n");
-            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyPress, Qt::Key_U, Qt::ControlModifier);
-            m_clickCount++;
-            m_clickTimer->stop();
-            m_pressTime.start();
-        } else {
-            debug_log("BTN_STYLUS release -> Ctrl+U\n");
-            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyRelease, Qt::Key_U, Qt::ControlModifier);
-            if (m_pressTime.elapsed() < PRESS_TIMEOUT_MS) {
-                m_primed = true;
-                m_clickTimer->start();
-            } else {
-                m_clickCount = 0;
-                m_primed = false;
-            }
-        }
-    }
-
     int m_fd;
     QSocketNotifier *m_notifier;
-    QString m_device;
-    QTimer *m_clickTimer;
-    QElapsedTimer m_pressTime;
-    int m_clickCount;
-    bool m_primed;
+    bool m_rubberActive;
 };
 
-class StylusThread : public QThread {
+static StylusHandler *g_handler = nullptr;
+static QString g_devicePath;
+
+class RmStylus : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(bool buttonHeld READ buttonHeld NOTIFY buttonHeldChanged)
+    Q_PROPERTY(bool button2Held READ button2Held NOTIFY button2HeldChanged)
+    Q_PROPERTY(bool rubberActive READ rubberActive NOTIFY rubberActiveChanged)
 public:
-    StylusThread(const QString &device, QObject *parent = nullptr)
-        : QThread(parent), m_device(device), m_handler(nullptr) {
+    explicit RmStylus(QObject *parent = nullptr)
+        : QObject(parent), m_buttonHeld(false), m_button2Held(false), m_rubberActive(false) {
+        if (!g_handler && !g_devicePath.isEmpty()) {
+            g_handler = new StylusHandler(g_devicePath, QCoreApplication::instance());
+        }
+        if (!g_handler)
+            return;
+        connect(g_handler, &StylusHandler::buttonPressed, this, [this]() {
+            m_buttonHeld = true;
+            emit buttonHeldChanged();
+            emit buttonPressed();
+        });
+        connect(g_handler, &StylusHandler::buttonReleased, this, [this]() {
+            m_buttonHeld = false;
+            emit buttonHeldChanged();
+            emit buttonReleased();
+        });
+        connect(g_handler, &StylusHandler::button2Pressed, this, [this]() {
+            m_button2Held = true;
+            emit button2HeldChanged();
+            emit button2Pressed();
+        });
+        connect(g_handler, &StylusHandler::button2Released, this, [this]() {
+            m_button2Held = false;
+            emit button2HeldChanged();
+            emit button2Released();
+        });
+        connect(g_handler, &StylusHandler::rubberActivated, this, [this]() {
+            m_rubberActive = true;
+            emit rubberActiveChanged();
+            emit rubberActivated();
+        });
+        connect(g_handler, &StylusHandler::rubberDeactivated, this, [this]() {
+            m_rubberActive = false;
+            emit rubberActiveChanged();
+            emit rubberDeactivated();
+        });
     }
 
-    ~StylusThread() {
-        quit();
-        wait();
-    }
+    bool buttonHeld() const { return m_buttonHeld; }
+    bool button2Held() const { return m_button2Held; }
+    bool rubberActive() const { return m_rubberActive; }
 
-protected:
-    void run() override {
-        debug_log("Thread started\n");
-        m_handler = new StylusHandler(m_device);
-        exec();
-        delete m_handler;
-        m_handler = nullptr;
-        debug_log("Thread exiting\n");
-    }
+signals:
+    void buttonPressed();
+    void buttonReleased();
+    void button2Pressed();
+    void button2Released();
+    void rubberActivated();
+    void rubberDeactivated();
+    void buttonHeldChanged();
+    void button2HeldChanged();
+    void rubberActiveChanged();
 
 private:
-    QString m_device;
-    StylusHandler *m_handler;
+    bool m_buttonHeld;
+    bool m_button2Held;
+    bool m_rubberActive;
 };
 
-static StylusThread *thread = nullptr;
+extern "C" char _xovi_shouldLoad() {
+    if (!dlsym(RTLD_DEFAULT, "_Z21qRegisterResourceDataiPKhS0_S0_")) {
+        debug_log("Not a GUI application, refusing to load\n");
+        return 0;
+    }
+    return 1;
+}
 
 extern "C" void _xovi_construct() {
     debug_log("Extension loading (version %s)\n", VERSION);
+
+    qmlRegisterType<RmStylus>("net.rmitchellscott.RmStylus", 1, 0, "RmStylus");
 
     char* pen_device = findPenDevice();
     if (!pen_device) {
@@ -193,8 +230,7 @@ extern "C" void _xovi_construct() {
         return;
     }
 
-    thread = new StylusThread(QString::fromLocal8Bit(pen_device));
-    thread->start();
+    g_devicePath = QString::fromLocal8Bit(pen_device);
     debug_log("Extension loaded\n");
 }
 

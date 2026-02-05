@@ -10,6 +10,13 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: armv7
+            docker_image: eeems/remarkable-toolchain:latest-rm2
+          - arch: aarch64
+            docker_image: eeems/remarkable-toolchain:latest-rmpp
 
     steps:
       - name: Checkout rm-stylus
@@ -33,18 +40,22 @@ jobs:
           rm xovi.tar.gz
           echo "Successfully extracted xovi release $LATEST_TAG"
 
-      - name: Build
+      - name: Build (${{ matrix.arch }})
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/work" \
             -w /work \
             -e XOVI_REPO=/work/xovi-repo \
             -e VERSION=${{ github.ref_name }} \
-            eeems/remarkable-toolchain:latest-rm2 \
+            -e ARCH=${{ matrix.arch }} \
+            ${{ matrix.docker_image }} \
             bash -c '
+              set -ex
+              BUILD_ARCH=$ARCH
               . /opt/codex/*/*/environment-setup-*
+              ARCH=$BUILD_ARCH
 
-              QT_CFLAGS=$(pkg-config --cflags Qt6Gui)
+              QT_CFLAGS=$(pkg-config --cflags Qt6Gui Qt6Qml)
               QT_PRIVATE=$SDKTARGETSYSROOT/usr/include/QtGui/$(pkg-config --modversion Qt6Gui)/QtGui
               MOC=$OECORE_NATIVE_SYSROOT/usr/libexec/moc
               XOVI_VERSION=$(echo "$VERSION" | sed "s/^v//" | awk -F"[.-]" "{if (NF >= 3 && \$1 ~ /^[0-9]+$/) printf \"%d\", (\$1 * 65536) + (\$2 * 256) + \$3; else print \"0\"}")
@@ -55,21 +66,21 @@ jobs:
 
               mkdir -p build
 
-              python3 $XOVI_REPO/util/xovigen.py -a armv7 -o build/xovi.c -H build/xovi.h rm-stylus.xovi
+              python3 $XOVI_REPO/util/xovigen.py -a $ARCH -o build/xovi.c -H build/xovi.h rm-stylus.xovi
               sed -i "s/const int EXTENSIONVERSION = [0-9]*/const int EXTENSIONVERSION = $XOVI_VERSION/" build/xovi.c
 
               $MOC $QT_CFLAGS -I$QT_PRIVATE src/stylus.cpp -o build/stylus.moc
 
               $CC $CFLAGS -Ibuild -c build/xovi.c -o build/xovi.o
               $CXX $CXXFLAGS -Ibuild -c src/stylus.cpp -o build/stylus.o
-              $CXX $CXXFLAGS -shared -o rm-stylus.so build/stylus.o build/xovi.o $LDFLAGS
+              $CXX $CXXFLAGS -shared -o rm-stylus-$ARCH.so build/stylus.o build/xovi.o $LDFLAGS
             '
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rm-stylus
-          path: rm-stylus.so
+          name: rm-stylus-${{ matrix.arch }}
+          path: rm-stylus-${{ matrix.arch }}.so
           retention-days: 90
 
   release:
@@ -93,13 +104,14 @@ jobs:
           git cliff --config-url https://gist.githubusercontent.com/rmitchellscott/823c46de7a1c3e6d57e9de90ee00d84a/raw/cliff.toml \
             --latest --strip header | tail -n +2 > CHANGELOG.md
 
-      - name: Download artifact
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
-          name: rm-stylus
+          pattern: rm-stylus-*
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: rm-stylus.so
+          files: rm-stylus-*.so
           body_path: CHANGELOG.md
