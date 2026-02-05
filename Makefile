@@ -18,7 +18,7 @@ OUTPUT = $(name).so
 
 OBJECTS = $(BUILD)/stylus.o $(BUILD)/xovi.o
 
-.PHONY: all clean print-version deploy
+.PHONY: all clean print-version
 
 print-version:
 	@echo "VERSION=$(VERSION)"
@@ -48,6 +48,3 @@ $(BUILD)/xovi.c: rm-stylus.xovi
 clean:
 	rm -f $(name).so
 	rm -rf build
-
-deploy: all
-	scp $(OUTPUT) rm1:/home/root/xovi/extensions.d/
