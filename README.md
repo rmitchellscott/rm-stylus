@@ -1,4 +1,4 @@
-[![rm1](https://img.shields.io/badge/rM1-supported-green)](https://remarkable.com/store/remarkable)
+i[![rm1](https://img.shields.io/badge/rM1-supported-green)](https://remarkable.com/store/remarkable)
 [![rm2](https://img.shields.io/badge/rM2-supported-green)](https://remarkable.com/store/remarkable-2)
 # rm-stylus
 
@@ -20,6 +20,7 @@ Inspired by [mb1986/remarkable-stylus](https://github.com/mb1986/remarkable-styl
 `vellum add rm-stylus`
 
 **Manually**
+
 Download from the latest release and copy to `~/xovi/extensions.d/`
 
 ## Building
