@@ -1,0 +1,83 @@
+name: Build rm-stylus
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*.*.*']
+  pull_request:
+    branches: ['**']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout rm-stylus
+        uses: actions/checkout@v4
+
+      - name: Download xovi release
+        run: |
+          LATEST_TAG=$(curl -s https://api.github.com/repos/asivery/xovi/releases/latest | jq -r .tag_name)
+
+          if [ "$LATEST_TAG" = "null" ] || [ -z "$LATEST_TAG" ]; then
+            echo "Error: No xovi release found"
+            exit 1
+          fi
+
+          echo "Using xovi release: $LATEST_TAG"
+
+          curl -L -o xovi.tar.gz \
+            "https://github.com/asivery/xovi/archive/refs/tags/$LATEST_TAG.tar.gz"
+          tar -xzf xovi.tar.gz
+          mv xovi-* xovi-repo
+          rm xovi.tar.gz
+          echo "Successfully extracted xovi release $LATEST_TAG"
+
+      - name: Build
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            -w /work \
+            -e XOVI_REPO=/work/xovi-repo \
+            -e VERSION=${{ github.ref_name }} \
+            eeems/remarkable-toolchain:latest-rm2 \
+            bash -c '. /opt/codex/*/*/environment-setup-*; make all'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: rm-stylus
+          path: rm-stylus.so
+          retention-days: 90
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install git-cliff
+        uses: taiki-e/install-action@git-cliff
+
+      - name: Generate changelog
+        run: |
+          git cliff --config-url https://gist.githubusercontent.com/rmitchellscott/823c46de7a1c3e6d57e9de90ee00d84a/raw/cliff.toml \
+            --latest --strip header | tail -n +2 > CHANGELOG.md
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rm-stylus
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: rm-stylus.so
+          body_path: CHANGELOG.md
