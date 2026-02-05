@@ -24,7 +24,16 @@ print-version:
 	@echo "VERSION=$(VERSION)"
 	@echo "XOVI_VERSION=$(XOVI_VERSION)"
 
-all: $(OUTPUT)
+all:
+	docker run --rm \
+		-v "$(CURDIR):/work" \
+		-w /work \
+		-e XOVI_REPO=/work/xovi-repo \
+		-e VERSION=$(VERSION) \
+		eeems/remarkable-toolchain:latest-rm2 \
+		bash -c '. /opt/codex/*/*/environment-setup-*; make build'
+
+build: $(OUTPUT)
 
 $(OUTPUT): $(OBJECTS)
 	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(LDFLAGS)

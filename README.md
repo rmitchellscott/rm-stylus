@@ -6,6 +6,8 @@ An [xovi](https://github.com/asivery/xovi) extension that converts stylus button
 
 - BTN_STYLUS (side button) → Ctrl+U (undo)
 - BTN_TOOL_RUBBER (eraser end) → Ctrl+T (toggle eraser)
+- 2 button clicks → Ctrl+Z
+- 3 button clicks → Ctrl+Y
 
 Works with [shortcutsToChooseEraser.qmd](https://github.com/ingatellent/xovi-qmd-extensions/tree/main?tab=readme-ov-file#shortcutstochooseeraseqmd) for eraser switching.
 

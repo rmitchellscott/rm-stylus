@@ -41,7 +41,29 @@ jobs:
             -e XOVI_REPO=/work/xovi-repo \
             -e VERSION=${{ github.ref_name }} \
             eeems/remarkable-toolchain:latest-rm2 \
-            bash -c '. /opt/codex/*/*/environment-setup-*; make all'
+            bash -c '
+              . /opt/codex/*/*/environment-setup-*
+
+              QT_CFLAGS=$(pkg-config --cflags Qt6Gui)
+              QT_PRIVATE=$SDKTARGETSYSROOT/usr/include/QtGui/$(pkg-config --modversion Qt6Gui)/QtGui
+              MOC=$OECORE_NATIVE_SYSROOT/usr/libexec/moc
+              XOVI_VERSION=$(echo "$VERSION" | sed "s/^v//" | awk -F"[.-]" "{if (NF >= 3 && \$1 ~ /^[0-9]+$/) printf \"%d\", (\$1 * 65536) + (\$2 * 256) + \$3; else print \"0\"}")
+
+              CXXFLAGS="-D_GNU_SOURCE -fPIC -O2 -DVERSION=\"$VERSION\" -std=c++17 $QT_CFLAGS -I$QT_PRIVATE"
+              CFLAGS="-D_GNU_SOURCE -fPIC -O2 -DVERSION=\"$VERSION\""
+              LDFLAGS="-lpthread"
+
+              mkdir -p build
+
+              python3 $XOVI_REPO/util/xovigen.py -a armv7 -o build/xovi.c -H build/xovi.h rm-stylus.xovi
+              sed -i "s/const int EXTENSIONVERSION = [0-9]*/const int EXTENSIONVERSION = $XOVI_VERSION/" build/xovi.c
+
+              $MOC $QT_CFLAGS -I$QT_PRIVATE src/stylus.cpp -o build/stylus.moc
+
+              $CC $CFLAGS -Ibuild -c build/xovi.c -o build/xovi.o
+              $CXX $CXXFLAGS -Ibuild -c src/stylus.cpp -o build/stylus.o
+              $CXX $CXXFLAGS -shared -o rm-stylus.so build/stylus.o build/xovi.o $LDFLAGS
+            '
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

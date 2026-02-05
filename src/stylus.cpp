@@ -9,6 +9,8 @@
 #include <QObject>
 #include <QSocketNotifier>
 #include <QThread>
+#include <QTimer>
+#include <QElapsedTimer>
 #include <qpa/qwindowsysteminterface.h>
 
 extern "C" {
@@ -66,8 +68,11 @@ static char* findPenDevice() {
 class StylusHandler : public QObject {
     Q_OBJECT
 public:
+    static constexpr int PRESS_TIMEOUT_MS = 200;
+
     StylusHandler(const QString &device, QObject *parent = nullptr)
-        : QObject(parent), m_fd(-1), m_notifier(nullptr), m_device(device) {
+        : QObject(parent), m_fd(-1), m_notifier(nullptr), m_device(device),
+          m_clickCount(0), m_primed(false) {
 
         m_fd = open(device.toLocal8Bit().constData(), O_RDONLY | O_NONBLOCK);
         if (m_fd < 0) {
@@ -75,6 +80,11 @@ public:
             return;
         }
         debug_log("Opened pen device: %s\n", qPrintable(device));
+
+        m_clickTimer = new QTimer(this);
+        m_clickTimer->setSingleShot(true);
+        m_clickTimer->setInterval(PRESS_TIMEOUT_MS);
+        connect(m_clickTimer, &QTimer::timeout, this, &StylusHandler::onClickTimeout);
 
         m_notifier = new QSocketNotifier(m_fd, QSocketNotifier::Read, this);
         connect(m_notifier, &QSocketNotifier::activated, this, &StylusHandler::readData);
@@ -91,11 +101,10 @@ private slots:
         struct input_event ev;
         while (read(m_fd, &ev, sizeof(ev)) == sizeof(ev)) {
             if (ev.type == EV_KEY) {
-                QEvent::Type qEvent = ev.value != 0 ? QEvent::KeyPress : QEvent::KeyRelease;
                 if (ev.code == BTN_STYLUS) {
-                    debug_log("BTN_STYLUS %s -> Ctrl+U\n", ev.value ? "press" : "release");
-                    QWindowSystemInterface::handleKeyEvent(nullptr, qEvent, Qt::Key_U, Qt::ControlModifier);
+                    handleStylusButton(ev.value);
                 } else if (ev.code == BTN_TOOL_RUBBER) {
+                    QEvent::Type qEvent = ev.value != 0 ? QEvent::KeyPress : QEvent::KeyRelease;
                     debug_log("BTN_TOOL_RUBBER %s -> Ctrl+T\n", ev.value ? "press" : "release");
                     QWindowSystemInterface::handleKeyEvent(nullptr, qEvent, Qt::Key_T, Qt::ControlModifier);
                 }
@@ -103,10 +112,48 @@ private slots:
         }
     }
 
+    void onClickTimeout() {
+        if (m_clickCount == 2) {
+            debug_log("Double-click -> Ctrl+Z (undo)\n");
+            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyPress, Qt::Key_Z, Qt::ControlModifier);
+            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyRelease, Qt::Key_Z, Qt::ControlModifier);
+        } else if (m_clickCount >= 3) {
+            debug_log("Triple-click -> Ctrl+Y (redo)\n");
+            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyPress, Qt::Key_Y, Qt::ControlModifier);
+            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyRelease, Qt::Key_Y, Qt::ControlModifier);
+        }
+        m_clickCount = 0;
+        m_primed = false;
+    }
+
 private:
+    void handleStylusButton(int value) {
+        if (value != 0) {
+            debug_log("BTN_STYLUS press -> Ctrl+U\n");
+            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyPress, Qt::Key_U, Qt::ControlModifier);
+            m_clickCount++;
+            m_clickTimer->stop();
+            m_pressTime.start();
+        } else {
+            debug_log("BTN_STYLUS release -> Ctrl+U\n");
+            QWindowSystemInterface::handleKeyEvent(nullptr, QEvent::KeyRelease, Qt::Key_U, Qt::ControlModifier);
+            if (m_pressTime.elapsed() < PRESS_TIMEOUT_MS) {
+                m_primed = true;
+                m_clickTimer->start();
+            } else {
+                m_clickCount = 0;
+                m_primed = false;
+            }
+        }
+    }
+
     int m_fd;
     QSocketNotifier *m_notifier;
     QString m_device;
+    QTimer *m_clickTimer;
+    QElapsedTimer m_pressTime;
+    int m_clickCount;
+    bool m_primed;
 };
 
 class StylusThread : public QThread {
