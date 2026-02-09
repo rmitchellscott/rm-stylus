@@ -3,6 +3,7 @@
 [![rm2](https://img.shields.io/badge/rM2-supported-green)](https://remarkable.com/store/remarkable-2)
 [![rmpp](https://img.shields.io/badge/rMPP-supported-green)](https://remarkable.com/products/remarkable-paper/pro)
 [![rmppm](https://img.shields.io/badge/rMPPM-supported-green)](https://remarkable.com/products/remarkable-paper/pro-move)
+[![vellum](https://img.shields.io/badge/vellum-rm--stylus-purple)](https://vellum.delivery/#/package/rm-stylus/)
 
 An [xovi](https://github.com/asivery/xovi) extension that exposes stylus button events as a QML type for reMarkable tablets.
 
