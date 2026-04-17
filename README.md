@@ -58,5 +58,6 @@ make all
 ```
 
 ## License
+Copyright (C) 2026 Mitchell Scott
 
-MIT
+Licensed under the GNU General Public License v3.0.
