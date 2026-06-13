@@ -41,7 +41,7 @@ RmStylus {
 
 ## Installation
 
-**Via [Vellum package manager](https://github/vellum-dev/vellum)**
+**Via [Vellum package manager](https://github.com/vellum-dev/vellum)**
 
 `vellum add rm-stylus`
 
